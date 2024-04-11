@@ -1,33 +1,28 @@
+// src/index.js
+
 const parseQuery = require('./queryParser');
 const readCSV = require('./csvReader');
 
 async function executeSELECTQuery(query) {
-    try {
-        const { fields, table } = parseQuery(query);
-        const filePath = `${table}.csv`;
+    const { fields, table, whereClause } = parseQuery(query);
+    const data = await readCSV(`${table}.csv`);
+    
+    // Filtering based on WHERE clause
+    const filteredData = whereClause
+        ? data.filter(row => {
+            const [field, value] = whereClause.split('=').map(s => s.trim());
+            return row[field] === value;
+        })
+        : data;
 
-        // Read CSV file
-        const data = await readCSV(filePath);
-
-        // Check if CSV file is empty
-        if (data.length === 0) {
-            throw new Error(`CSV file "${filePath}" is empty`);
-        }
-
-        // Filter the fields based on the query
-        return data.map(row => {
-            const filteredRow = {};
-            fields.forEach(field => {
-                if (!row.hasOwnProperty(field)) {
-                    throw new Error(`Field "${field}" not found in CSV file`);
-                }
-                filteredRow[field] = row[field];
-            });
-            return filteredRow;
+    // Selecting the specified fields
+    return filteredData.map(row => {
+        const selectedRow = {};
+        fields.forEach(field => {
+            selectedRow[field] = row[field];
         });
-    } catch (error) {
-        throw new Error(`Error executing query: ${error.message}`);
-    }
+        return selectedRow;
+    });
 }
 
 module.exports = executeSELECTQuery;
