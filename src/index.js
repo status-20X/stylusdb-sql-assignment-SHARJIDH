@@ -1,64 +1,244 @@
-// index.js
-
-const parseQuery = require('./queryParser');
-const readCSV = require('./csvReader');
-
-function evaluateCondition(row, clause) {
-    const { field, operator, value } = clause;
-    switch (operator) {
-        case '=': return row[field] === value;
-        case '!=': return row[field] !== value;
-        case '>': return row[field] > value;
-        case '<': return row[field] < value;
-        case '>=': return row[field] >= value;
-        case '<=': return row[field] <= value;
-        default: throw new Error(`Unsupported operator: ${operator}`);
-    }
-}
+const readCSV = require("./csvReader");
+const { parseQuery } = require("./queryParser");
 
 async function executeSELECTQuery(query) {
-    try {
-        // Now we will have joinTable, joinCondition in the parsed query
-        const { fields, table, whereClauses, joinTable, joinCondition } = parseQuery(query);
-        let data = await readCSV(`${table}.csv`);
-
-        // Perform INNER JOIN if specified
-        if (joinTable && joinCondition) {
-            const joinData = await readCSV(`${joinTable}.csv`);
-            data = data.flatMap(mainRow => {
-                return joinData
-                    .filter(joinRow => {
-                        const mainValue = mainRow[joinCondition.left.split('.')[1]];
-                        const joinValue = joinRow[joinCondition.right.split('.')[1]];
-                        return mainValue === joinValue;
-                    })
-                    .map(joinRow => {
-                        return fields.reduce((acc, field) => {
-                            const [tableName, fieldName] = field.split('.');
-                            acc[field] = tableName === table ? mainRow[fieldName] : joinRow[fieldName];
-                            return acc;
-                        }, {});
-                    });
-            });
-        }
-
-        // Apply WHERE clause filtering after JOIN (or on the original data if no join)
-        const filteredData = whereClauses.length > 0
-            ? data.filter(row => whereClauses.every(clause => evaluateCondition(row, clause)))
-            : data;
-
-        // Map the result to include only the specified fields
-        return filteredData.map(row => {
-            const selectedRow = {};
-            fields.forEach(field => {
-                // Assuming 'field' is just the column name without table prefix
-                selectedRow[field] = row[field];
-            });
-            return selectedRow;
-        });
-    } catch (error) {
-        throw new Error(`Error executing query: ${error.message}`);
+  const { fields, table, whereClauses, joinType, joinTable, joinCondition } =
+    parseQuery(query);
+  console.log(
+    "whats",
+    fields,
+    table,
+    whereClauses,
+    joinType,
+    joinTable,
+    joinCondition
+  );
+  let data = await readCSV(`${table}.csv`);
+  console.log("Data from CSV:", data);
+  //
+  console.log("Data from CSV:", data);
+  console.log("whereClauses", whereClauses);
+  console.log("table", table);
+  // Perform INNER JOIN if specified
+  let data_new = [];
+  if (joinTable && joinCondition) {
+    const joinData = await readCSV(`${joinTable}.csv`);
+    switch (joinType.toUpperCase()) {
+      case "INNER":
+        data_new = performInnerJoin(
+          data,
+          joinData,
+          joinCondition,
+          fields,
+          table,
+          whereClauses
+        );
+        break;
+      case "LEFT":
+        data_new = performLeftJoin(
+          data,
+          joinData,
+          joinCondition,
+          fields,
+          table
+        );
+        break;
+      case "RIGHT":
+        data_new = performRightJoin(
+          data,
+          joinData,
+          joinCondition,
+          fields,
+          table
+        );
+        break;
+      default:
+        throw new Error(`Unsupported JOIN type: ${joinType}`);
     }
+  }
+  console.log("data1", data);
+  console.log("data2", data_new);
+
+  let result = [];
+
+  // Check if whereClauses array has elements and data_new contains any rows
+  if (whereClauses.length > 0 && data_new.length > 0) {
+    // Apply whereClause to data_new
+    result = data_new.filter((row) => evaluateCondition(row, whereClauses));
+  } else if (whereClauses.length > 0) {
+    // Apply whereClause to original data
+    result = data.filter((row) => evaluateCondition(row, whereClauses));
+  } else {
+    // If whereClauses is empty, return data_new if it contains rows, otherwise return original data
+    result = data_new.length > 0 ? data_new : data;
+    result = result.map((row) => {
+      delete row.age;
+      return row;
+    });
+  }
+  console.log("data2", result);
+  result = result.map((row) => {
+    const filteredRow = {};
+    fields.forEach((field) => {
+      filteredRow[field] = row[field];
+    });
+    return filteredRow;
+  });
+
+  console.log("Filtered result:", result);
+  return result;
+}
+
+function performInnerJoin(
+  data,
+  joinData,
+  joinCondition,
+  fields,
+  table,
+  whereClause
+) {
+  console.log("joinData", data);
+  console.log("joinCondition", joinCondition);
+  //     console.log("fields", fields);
+  //     console.log("table", table);
+  const leftColumn = joinCondition.left.split(".").pop();
+  const rightColumn = joinCondition.right.split(".").pop();
+  console.log("spiltted", leftColumn, rightColumn);
+  console.log(Object.keys(data[0]));
+
+  const joinedRows = [];
+  for (let i = 0; i < data.length; i++) {
+    for (let j = 0; j < joinData.length; j++) {
+      if (data[i][leftColumn] === joinData[j][rightColumn]) {
+        console.log("data[i][joinCondition.left]", data[i][leftColumn]);
+        console.log(
+          "joinData[j][joinCondition.right]",
+          joinData[j][rightColumn]
+        );
+        console.log(
+          "data[i][joinCondition.left] === joinData[j][joinCondition.right]",
+          data[i][leftColumn] === joinData[j][rightColumn]
+        );
+        joinedRows.push({
+          "student.name": data[i]["name"],
+          "enrollment.course": joinData[j]["course"],
+          "student.age": data[i]["age"],
+        });
+      }
+    }
+  }
+  console.log("joinedRows", joinedRows);
+  return joinedRows;
+}
+
+function performLeftJoin(data, joinData, joinCondition, fields, table) {
+  const leftColumn = joinCondition.left.split(".").pop();
+  const rightColumn = joinCondition.right.split(".").pop();
+  console.log("field", fields);
+  const joinedRows = [];
+  const left = fields[0];
+  const right = fields[1];
+
+  for (let i = 0; i < data.length; i++) {
+    let foundMatch = false;
+
+    for (let j = 0; j < joinData.length; j++) {
+      if (data[i][leftColumn] === joinData[j][rightColumn]) {
+        foundMatch = true;
+        const joinedRow = {
+          "student.name": data[i]["name"],
+          "enrollment.course": joinData[j]["course"],
+        };
+        joinedRows.push(joinedRow);
+      }
+    }
+
+    if (!foundMatch) {
+      joinedRows.push({
+        "student.name": data[i]["name"],
+        "enrollment.course": null,
+      });
+    }
+  }
+
+  return joinedRows;
+}
+
+function performRightJoin(data, joinData, joinCondition, fields, table) {
+  const leftColumn = joinCondition.left.split(".").pop();
+  const rightColumn = joinCondition.right.split(".").pop();
+  const joinedRows = [];
+  const left = fields[0];
+  const right = fields[1];
+
+  for (let i = 0; i < joinData.length; i++) {
+    let foundMatch = false;
+
+    for (let j = 0; j < data.length; j++) {
+      if (joinData[i][rightColumn] === data[j][leftColumn]) {
+        foundMatch = true;
+        break;
+      }
+    }
+
+    if (foundMatch) {
+      for (let j = 0; j < data.length; j++) {
+        if (joinData[i][rightColumn] === data[j][leftColumn]) {
+          joinedRows.push({
+            "student.name": data[j]["name"],
+            "enrollment.course": joinData[i]["course"],
+          });
+        }
+      }
+    } else {
+      joinedRows.push({
+        "student.name": null,
+        "enrollment.course": joinData[i]["course"],
+      });
+    }
+  }
+
+  return joinedRows;
+}
+
+function evaluateCondition(row, clauses) {
+  console.log("clause", clauses);
+  console.log("row", row);
+  let result = true; // Assuming all clauses should match by default
+
+  // Iterate through each clause
+  for (const clause of clauses) {
+    // Evaluate the current clause
+    let clauseResult;
+    switch (clause.operator) {
+      case "=":
+        clauseResult = row[clause.field] == clause.value;
+        break;
+      case ">":
+        clauseResult = row[clause.field] > clause.value;
+        break;
+      case ">=":
+        clauseResult = row[clause.field] >= clause.value;
+        break;
+      case "<":
+        clauseResult = row[clause.field] < clause.value;
+        break;
+      case "<=":
+        clauseResult = row[clause.field] <= clause.value;
+        break;
+      case "!=":
+        clauseResult = row[clause.field] != clause.value;
+        break;
+      default:
+        throw new Error(`Unsupported operator: ${clause.operator}`);
+    }
+
+    // Combine the current clause result with the final result
+    // For AND condition, all clauses should be true
+    // For OR condition, at least one clause should be true
+    result = result && clauseResult; // For AND condition
+  }
+  return result;
 }
 
 module.exports = executeSELECTQuery;
